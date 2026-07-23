@@ -1,0 +1,268 @@
+syntax = "proto3";
+
+package arisa.v1;
+
+import "google/protobuf/empty.proto";
+
+service Arisa {
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
+
+  rpc Reply(ReplyRequest) returns (google.protobuf.Empty);
+  rpc React(ReactRequest) returns (google.protobuf.Empty);
+  rpc MarkRead(MarkReadRequest) returns (google.protobuf.Empty);
+  rpc EnterChannel(EnterChannelRequest) returns (google.protobuf.Empty);
+  rpc SendMedia(SendMediaRequest) returns (google.protobuf.Empty);
+
+  rpc GetUser(GetUserRequest) returns (Member);
+  rpc GetUsers(GetUsersRequest) returns (GetUsersResponse);
+  rpc GetChannel(GetChannelRequest) returns (Channel);
+  rpc GetMessage(GetMessageRequest) returns (Event);
+  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
+  rpc GetChannelMembers(GetChannelMembersRequest) returns (ChannelMembers);
+
+  rpc RawQuery(RawQueryRequest) returns (RawQueryResponse);
+  rpc Decrypt(DecryptRequest) returns (DecryptResponse);
+  rpc GetCredential(google.protobuf.Empty) returns (Credential);
+}
+
+message SubscribeEventsRequest {}
+
+message ReplyRequest {
+  int64 channel_id = 1;
+  string message = 2;
+  optional int64 thread_id = 3;
+}
+
+message ReactRequest {
+  int64 channel_id = 1;
+  int64 message_id = 2;
+}
+
+message MarkReadRequest {
+  int64 channel_id = 1;
+}
+
+message EnterChannelRequest {
+  int64 channel_id = 1;
+}
+
+enum MediaMode {
+  MEDIA_MODE_SINGLE = 0;
+  MEDIA_MODE_MULTIPLE = 1;
+}
+
+message MediaFile {
+  optional string name = 1;
+  string mime = 2;
+  bytes data = 3;
+}
+
+message SendMediaRequest {
+  int64 channel_id = 1;
+  MediaMode mode = 2;
+  repeated MediaFile files = 3;
+}
+
+message GetUserRequest {
+  int64 channel_id = 1;
+  int64 user_id = 2;
+}
+
+message GetUsersRequest {
+  int64 channel_id = 1;
+  repeated int64 user_ids = 2;
+}
+
+message GetUsersResponse {
+  repeated Member members = 1;
+}
+
+message GetChannelRequest {
+  int64 channel_id = 1;
+}
+
+message GetMessageRequest {
+  int64 channel_id = 1;
+  int64 message_id = 2;
+}
+
+message GetMessagesRequest {
+  int64 channel_id = 1;
+  repeated int64 message_ids = 2;
+}
+
+message GetMessagesResponse {
+  repeated Event events = 1;
+}
+
+message GetChannelMembersRequest {
+  int64 channel_id = 1;
+}
+
+message RawQueryRequest {
+  string sql = 1;
+  optional uint32 limit = 2;
+}
+
+message RawQueryResponse {
+  repeated string rows_json = 1;
+}
+
+message DecryptRequest {
+  string ciphertext = 1;
+  uint32 enc = 2;
+  optional int64 user_id = 3;
+}
+
+message DecryptResponse {
+  string plaintext = 1;
+}
+
+message Credential {
+  string access_token = 1;
+  string refresh_token = 2;
+  string device_uuid = 3;
+}
+
+message Channel {
+  int64 id = 1;
+  string channel_type = 2;
+  optional string name = 3;
+  optional string private_name = 4;
+}
+
+message ChannelMembers {
+  int64 channel_id = 1;
+  repeated int64 active_member_ids = 2;
+}
+
+enum ProfileType {
+  PROFILE_TYPE_UNKNOWN = 0;
+  PROFILE_TYPE_DEFAULT = 1;
+  PROFILE_TYPE_KAKAO = 2;
+  PROFILE_TYPE_OPEN = 3;
+}
+
+enum LinkMemberType {
+  LINK_MEMBER_TYPE_UNKNOWN = 0;
+  LINK_MEMBER_TYPE_HOST = 1;
+  LINK_MEMBER_TYPE_MEMBER = 2;
+  LINK_MEMBER_TYPE_MODERATOR = 3;
+  LINK_MEMBER_TYPE_BOT = 4;
+}
+
+message Member {
+  int64 id = 1;
+  bool is_mine = 2;
+  string nickname = 3;
+  optional string profile_image_url = 4;
+  optional OpenChannelMemberExtra open_channel = 5;
+}
+
+message OpenChannelMemberExtra {
+  ProfileType profile_type = 1;
+  LinkMemberType link_member_type = 2;
+  int64 profile_link_id = 3;
+}
+
+enum MessageScope {
+  MESSAGE_SCOPE_UNKNOWN = 0;
+  MESSAGE_SCOPE_CHANNEL = 1;
+  MESSAGE_SCOPE_THREAD = 2;
+  MESSAGE_SCOPE_ALL = 3;
+}
+
+message MessageEvent {
+  int64 message_id = 1;
+  optional int64 thread_id = 2;
+  MessageScope scope = 3;
+  int32 message_type = 4;
+  Channel channel = 5;
+  optional Member author = 6;
+  string message = 7;
+  string attachment_json = 8;
+}
+
+message FeedUser {
+  int64 id = 1;
+  string nickname = 2;
+}
+
+message FeedUserJoined {
+  repeated FeedUser joined_users = 1;
+}
+
+message FeedUserLeft {
+  FeedUser left_member = 1;
+}
+
+message FeedUserKicked {
+  FeedUser kicked_user = 1;
+  Member kicked_by = 2;
+}
+
+message FeedMessageDeleted {
+  int64 message_id = 1;
+}
+
+message FeedMessageChanged {
+  int64 message_id = 1;
+  int64 target_revision = 2;
+}
+
+message FeedMessageHidden {
+  repeated int64 message_ids = 1;
+}
+
+message FeedHostChanged {
+  FeedUser previous_host = 1;
+  FeedUser new_host = 2;
+}
+
+message FeedModeratorAdded {
+  FeedUser member = 1;
+}
+
+message FeedModeratorRemoved {
+  FeedUser member = 1;
+}
+
+message FeedManagerSpeakerMode {
+  bool enabled = 1;
+}
+
+message FeedOpenLinkDeleted {}
+
+message FeedUnknown {
+  string raw_json = 1;
+}
+
+message FeedPayload {
+  oneof value {
+    FeedUserJoined user_joined = 1;
+    FeedUserLeft user_left = 2;
+    FeedUserKicked user_kicked = 3;
+    FeedMessageDeleted message_deleted = 4;
+    FeedMessageChanged message_changed = 5;
+    FeedMessageHidden message_hidden = 6;
+    FeedHostChanged host_changed = 7;
+    FeedModeratorAdded moderator_added = 8;
+    FeedModeratorRemoved moderator_removed = 9;
+    FeedManagerSpeakerMode manager_speaker_mode = 10;
+    FeedOpenLinkDeleted open_link_deleted = 11;
+    FeedUnknown unknown = 12;
+  }
+}
+
+message FeedEvent {
+  Channel channel = 1;
+  FeedPayload feed = 2;
+  optional Member author = 3;
+}
+
+message Event {
+  oneof value {
+    MessageEvent message = 1;
+    FeedEvent feed = 2;
+  }
+}

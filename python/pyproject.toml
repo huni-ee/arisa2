@@ -1,0 +1,24 @@
+[project]
+name = "airi-py"
+version = "0.2.0"
+description = "Python client for Arisa"
+requires-python = ">=3.11"
+dependencies = [
+    "betterproto2[grpclib]>=0.10.0,<0.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/airi"]
+
+[dependency-groups]
+dev = [
+    "betterproto2-compiler>=0.10.1,<0.11",
+    "grpcio-tools>=1.80.0",
+]
+
+[tool.ruff]
+extend-exclude = ["src/airi/generated"]
