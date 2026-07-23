@@ -148,13 +148,6 @@ class BotClient:
         )
         await self._call((await self._get_stub()).reply(request))
 
-    async def reaction(self, channel_id: int, message_id: int) -> None:
-        await self._call(
-            (await self._get_stub()).react(
-                proto.ReactRequest(channel_id=channel_id, message_id=message_id)
-            )
-        )
-
     async def read(self, channel_id: int) -> None:
         await self._call(
             (await self._get_stub()).mark_read(

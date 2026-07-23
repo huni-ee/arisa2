@@ -39,19 +39,6 @@ pub fn reply<'local>(
     Ok(intent)
 }
 
-pub fn react<'local>(
-    env: &mut Env<'local>,
-    referer: &str,
-    channel_id: i64,
-    message_id: i64,
-) -> jni::errors::Result<JObject<'local>> {
-    let intent = notification_intent(env, "com.kakao.talk.notification.REACTION_MESSAGE")?;
-    put_string(env, &intent, "noti_referer", referer)?;
-    put_long(env, &intent, "chat_id", channel_id)?;
-    put_long(env, &intent, "chat_log_id", message_id)?;
-    Ok(intent)
-}
-
 pub fn mark_read<'local>(
     env: &mut Env<'local>,
     referer: &str,

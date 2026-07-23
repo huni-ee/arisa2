@@ -13,8 +13,8 @@ use crate::{
         Channel, ChannelMembers, Credential, DecryptRequest, DecryptResponse, EnterChannelRequest,
         Event, GetChannelMembersRequest, GetChannelRequest, GetMessageRequest, GetMessagesRequest,
         GetMessagesResponse, GetUserRequest, GetUsersRequest, GetUsersResponse, MarkReadRequest,
-        MediaMode, Member, RawQueryRequest, RawQueryResponse, ReactRequest, ReplyRequest,
-        SendMediaRequest, SubscribeEventsRequest, arisa_server::Arisa,
+        MediaMode, Member, RawQueryRequest, RawQueryResponse, ReplyRequest, SendMediaRequest,
+        SubscribeEventsRequest, arisa_server::Arisa,
     },
 };
 
@@ -71,14 +71,6 @@ impl Arisa for ArisaService {
             channel_id: request.channel_id,
             message: request.message,
             thread_id: request.thread_id,
-        })
-    }
-
-    async fn react(&self, request: Request<ReactRequest>) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        self.enqueue(Action::React {
-            channel_id: request.channel_id,
-            message_id: request.message_id,
         })
     }
 

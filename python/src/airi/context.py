@@ -57,13 +57,6 @@ class AiriContext(Generic[E]):
             thread_id=thread_id,
         )
 
-    async def reaction(self, message_id: int | None = None) -> None:
-        if message_id is None and isinstance(self.envelope, proto.MessageEvent):
-            message_id = self.envelope.message_id
-        if message_id is None:
-            raise TypeError("message_id is required for this event")
-        await self.bot.reaction(self.channel.id, message_id)
-
     async def read(self) -> None:
         await self.bot.read(self.channel.id)
 

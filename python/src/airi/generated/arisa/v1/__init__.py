@@ -46,7 +46,6 @@ __all__ = (
     "ProfileType",
     "RawQueryRequest",
     "RawQueryResponse",
-    "ReactRequest",
     "ReplyRequest",
     "SendMediaRequest",
     "SubscribeEventsRequest",
@@ -692,16 +691,6 @@ default_message_pool.register_message("arisa.v1", "RawQueryResponse", RawQueryRe
 
 
 @dataclass(eq=False, repr=False)
-class ReactRequest(betterproto2.Message):
-    channel_id: "int" = betterproto2.field(1, betterproto2.TYPE_INT64)
-
-    message_id: "int" = betterproto2.field(2, betterproto2.TYPE_INT64)
-
-
-default_message_pool.register_message("arisa.v1", "ReactRequest", ReactRequest)
-
-
-@dataclass(eq=False, repr=False)
 class ReplyRequest(betterproto2.Message):
     channel_id: "int" = betterproto2.field(1, betterproto2.TYPE_INT64)
 
@@ -775,24 +764,6 @@ class ArisaStub(betterproto2_grpclib.ServiceStub):
 
         return await self._unary_unary(
             "/arisa.v1.Arisa/Reply",
-            message,
-            __google__protobuf__.Empty,
-            timeout=timeout,
-            deadline=deadline,
-            metadata=metadata,
-        )
-
-    async def react(
-        self,
-        message: "ReactRequest",
-        *,
-        timeout: "float | None" = None,
-        deadline: "Deadline | None" = None,
-        metadata: "MetadataLike | None" = None,
-    ) -> "__google__protobuf__.Empty":
-
-        return await self._unary_unary(
-            "/arisa.v1.Arisa/React",
             message,
             __google__protobuf__.Empty,
             timeout=timeout,

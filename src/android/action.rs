@@ -22,10 +22,6 @@ pub enum Action {
         message: String,
         thread_id: Option<i64>,
     },
-    React {
-        channel_id: i64,
-        message_id: i64,
-    },
     MarkRead {
         channel_id: i64,
     },
@@ -86,13 +82,6 @@ impl ActionProcessor {
                 thread_id,
             } => {
                 let intent = intent::reply(env, referer, channel_id, &message, thread_id)?;
-                api.start_service(env, intent)?;
-            }
-            Action::React {
-                channel_id,
-                message_id,
-            } => {
-                let intent = intent::react(env, referer, channel_id, message_id)?;
                 api.start_service(env, intent)?;
             }
             Action::MarkRead { channel_id } => {

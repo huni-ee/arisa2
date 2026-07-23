@@ -8,7 +8,6 @@ service Arisa {
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
 
   rpc Reply(ReplyRequest) returns (google.protobuf.Empty);
-  rpc React(ReactRequest) returns (google.protobuf.Empty);
   rpc MarkRead(MarkReadRequest) returns (google.protobuf.Empty);
   rpc EnterChannel(EnterChannelRequest) returns (google.protobuf.Empty);
   rpc SendMedia(SendMediaRequest) returns (google.protobuf.Empty);
@@ -31,11 +30,6 @@ message ReplyRequest {
   int64 channel_id = 1;
   string message = 2;
   optional int64 thread_id = 3;
-}
-
-message ReactRequest {
-  int64 channel_id = 1;
-  int64 message_id = 2;
 }
 
 message MarkReadRequest {
