@@ -30,7 +30,7 @@ package_id="$(cargo pkgid)"
 version="${package_id##*@}"
 tag="v$version"
 
-if gh release view "$tag" --repo ye-seola/arisa2 >/dev/null 2>&1; then
+if gh release view "$tag" --repo huni-ee/arisa2 >/dev/null 2>&1; then
     echo "release $tag already exists" >&2
     exit 1
 fi
@@ -40,7 +40,13 @@ if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; the
     exit 1
 fi
 
-cargo ndk -t arm64-v8a -p 23 build --release --locked
+cargo ndk \
+    -t armeabi-v7a \
+    -t arm64-v8a \
+    -t x86 \
+    -t x86_64 \
+    -P 23 \
+    --link-builtins build --release --locked
 
 status="$(git status --porcelain --untracked-files=all)"
 if [[ -n "$status" ]]; then
@@ -50,11 +56,20 @@ if [[ -n "$status" ]]; then
 fi
 
 mkdir -p dist
-artifact="dist/arisa-arm64-v8a"
-cp target/aarch64-linux-android/release/arisa "$artifact"
+cp target/armv7-linux-androideabi/release/arisa dist/arisa-armeabi-v7a
+cp target/aarch64-linux-android/release/arisa dist/arisa-arm64-v8a
+cp target/i686-linux-android/release/arisa dist/arisa-x86
+cp target/x86_64-linux-android/release/arisa dist/arisa-x86_64
 
-gh release create "$tag" "$artifact" \
-    --repo ye-seola/arisa2 \
+gh release create "$tag" \
+    dist/arisa-armeabi-v7a \
+    dist/arisa-arm64-v8a \
+    dist/arisa-x86 \
+    dist/arisa-x86_64 \
+    scripts/arisa_control \
+    scripts/arisa_control.ps1 \
+    fileprovider.apk \
+    --repo huni-ee/arisa2 \
     --target "$commit" \
     --title "arisa $tag" \
     --generate-notes

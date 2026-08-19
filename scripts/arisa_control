@@ -1,0 +1,817 @@
+#!/bin/bash
+
+# --- Configuration ---
+ARISA_RELEASE_BASE_URL="https://github.com/huni-ee/arisa2/releases/latest/download"
+ARISA_CONFIG_PATH="/data/local/tmp/arisa_config.json"
+FILE_PROVIDER_APK_URL="$ARISA_RELEASE_BASE_URL/fileprovider.apk"
+FILE_PROVIDER_PACKAGE="io.zugu.fileprovider"
+
+DEFAULT_ARISA_BIND="0.0.0.0:3000"
+DEFAULT_ARISA_UID=0
+DEFAULT_ARISA_CALLING_PKG="com.android.shell"
+DEFAULT_ARISA_DB_PULL_DELAY=100
+
+# --- Global Variables ---
+ADB_CMD=""
+DEVICE_ARCH=""
+ARISA_PROCESS_NAME=""
+ARISA_BINARY_URL=""
+ARISA_BINARY_PATH=""
+ARISA_ASSET_NAME=""
+CONFIG_ARISA_BIND=""
+CONFIG_ARISA_UID=""
+CONFIG_ARISA_CALLING_PKG=""
+CONFIG_ARISA_DB_PULL_DELAY=""
+ARISA_ENV_PREFIX=""
+
+# --- Functions ---
+
+check_adb_installed() {
+  if ! command -v adb &> /dev/null; then
+    echo "adb is not installed. Please install adb and add it to your PATH."
+    echo "You can usually install it with your system's package manager (e.g., apt install adb, brew install android-platform-tools)."
+    return 1
+  fi
+}
+
+select_adb_device() {
+  if [ -n "$ADB_CMD" ]; then
+    return 0
+  fi
+
+  echo "Searching for connected devices..."
+  mapfile -t devices < <(adb devices | tr -d '\r' | awk 'NR > 1 && $2 == "device" {print $1}')
+
+  local num_devices=${#devices[@]}
+  if [ "$num_devices" -eq 0 ]; then
+    echo "Error: No adb devices found in 'device' state."
+    echo "Please connect a device via USB or use 'adb connect <ip>:<port>'."
+    return 1
+  elif [ "$num_devices" -eq 1 ]; then
+    local device_id="${devices[0]}"
+    echo "Found 1 device. Using: $device_id"
+    ADB_CMD="adb -s $device_id"
+  else
+    echo "Multiple devices found. Please choose one to use:"
+    local i=1
+    for device in "${devices[@]}"; do
+      echo "  $i) $device"
+      i=$((i + 1))
+    done
+
+    local choice
+    read -r -p "Enter number (1-$num_devices): " choice
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "$num_devices" ]; then
+      echo "Error: Invalid selection."
+      return 1
+    fi
+
+    local device_id="${devices[$((choice - 1))]}"
+    echo "Using device: $device_id"
+    ADB_CMD="adb -s $device_id"
+  fi
+}
+
+run_adb_shell_as_root() {
+  local command="$1"
+  local escaped_command
+
+  escaped_command=${command//\'/\'\\\'\'}
+  $ADB_CMD shell "su root sh -c '$escaped_command'"
+}
+
+ensure_su_root() {
+  local remote_uid
+  remote_uid=$(run_adb_shell_as_root "id -u" 2> /dev/null | tr -d '\r' | xargs)
+  if [ "$remote_uid" != "0" ]; then
+    echo "Root access through 'su root' is required to run Arisa."
+    return 1
+  fi
+}
+
+configure_arisa_for_device() {
+  DEVICE_ARCH=$(run_adb_shell_as_root "getprop ro.product.cpu.abi" 2> /dev/null | tr -d '\r' | xargs)
+  if [ -z "$DEVICE_ARCH" ]; then
+    echo "Error: Failed to detect the selected device architecture."
+    return 1
+  fi
+
+  echo "Current device architecture: $DEVICE_ARCH"
+
+  case "$DEVICE_ARCH" in
+    armeabi-v7a)
+      ARISA_ASSET_NAME="arisa-armeabi-v7a"
+      ;;
+    arm64-v8a)
+      ARISA_ASSET_NAME="arisa-arm64-v8a"
+      ;;
+    x86)
+      ARISA_ASSET_NAME="arisa-x86"
+      ;;
+    x86_64)
+      ARISA_ASSET_NAME="arisa-x86_64"
+      ;;
+    *)
+      echo "No Arisa binary is available for device architecture: $DEVICE_ARCH"
+      echo "Available architectures: armeabi-v7a, arm64-v8a, x86, x86_64"
+      return 1
+      ;;
+  esac
+
+  ARISA_PROCESS_NAME="$ARISA_ASSET_NAME"
+  ARISA_BINARY_URL="$ARISA_RELEASE_BASE_URL/$ARISA_ASSET_NAME"
+  ARISA_BINARY_PATH="/data/local/tmp/$ARISA_ASSET_NAME"
+}
+
+get_arisa_pid() {
+  local pid
+  pid=$(run_adb_shell_as_root "pidof '$ARISA_PROCESS_NAME'" 2> /dev/null | tr -d '\r')
+  echo "$pid"
+}
+
+is_valid_bind() {
+  local value="$1"
+  local ip
+  local port
+
+  if ! [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}:([0-9]{1,5})$ ]]; then
+    return 1
+  fi
+
+  ip="${value%:*}"
+  port="${value##*:}"
+  if [ "$((10#$port))" -lt 1 ] || [ "$((10#$port))" -gt 65535 ]; then
+    return 1
+  fi
+
+  local octet
+  local old_ifs="$IFS"
+  IFS='.'
+  for octet in $ip; do
+    if [ "$((10#$octet))" -gt 255 ]; then
+      IFS="$old_ifs"
+      return 1
+    fi
+  done
+  IFS="$old_ifs"
+}
+
+is_valid_calling_package() {
+  [[ "$1" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]]
+}
+
+write_arisa_config() {
+  local bind="$1"
+  local uid="$2"
+  local calling_package="$3"
+  local db_pull_delay="$4"
+  local json
+
+  json=$(printf '{"ARISA_BIND":"%s","ARISA_UID":%s,"ARISA_CALLING_PKG":"%s","ARISA_DB_PULL_DELAY":%s}' \
+    "$bind" "$uid" "$calling_package" "$db_pull_delay")
+
+  if ! printf '%s\n' "$json" | run_adb_shell_as_root "cat > '$ARISA_CONFIG_PATH'"; then
+    echo "Failed to write Arisa configuration: $ARISA_CONFIG_PATH"
+    return 1
+  fi
+
+  if ! run_adb_shell_as_root "chmod 644 '$ARISA_CONFIG_PATH'"; then
+    echo "Failed to set permissions on Arisa configuration: $ARISA_CONFIG_PATH"
+    return 1
+  fi
+}
+
+create_default_arisa_config() {
+  write_arisa_config \
+    "$DEFAULT_ARISA_BIND" \
+    "$DEFAULT_ARISA_UID" \
+    "$DEFAULT_ARISA_CALLING_PKG" \
+    "$DEFAULT_ARISA_DB_PULL_DELAY"
+}
+
+ensure_arisa_config() {
+  if run_adb_shell_as_root "test -f '$ARISA_CONFIG_PATH'"; then
+    return 0
+  fi
+
+  echo "Creating default Arisa configuration: $ARISA_CONFIG_PATH"
+  if ! create_default_arisa_config; then
+    return 1
+  fi
+  echo "Arisa configuration created successfully."
+}
+
+load_arisa_config() {
+  local json
+  json=$(run_adb_shell_as_root "cat '$ARISA_CONFIG_PATH'" 2> /dev/null | tr -d '\r\n')
+  if [ -z "$json" ]; then
+    echo "Failed to read Arisa configuration: $ARISA_CONFIG_PATH"
+    return 1
+  fi
+
+  if [[ "$json" =~ \"ARISA_BIND\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+    CONFIG_ARISA_BIND="${BASH_REMATCH[1]}"
+  else
+    CONFIG_ARISA_BIND="$DEFAULT_ARISA_BIND"
+  fi
+
+  if [[ "$json" =~ \"ARISA_UID\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+    CONFIG_ARISA_UID="${BASH_REMATCH[1]}"
+  else
+    CONFIG_ARISA_UID="$DEFAULT_ARISA_UID"
+  fi
+
+  if [[ "$json" =~ \"ARISA_CALLING_PKG\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+    CONFIG_ARISA_CALLING_PKG="${BASH_REMATCH[1]}"
+  else
+    CONFIG_ARISA_CALLING_PKG="$DEFAULT_ARISA_CALLING_PKG"
+  fi
+
+  if [[ "$json" =~ \"ARISA_DB_PULL_DELAY\"[[:space:]]*:[[:space:]]*(-?[0-9]+) ]]; then
+    CONFIG_ARISA_DB_PULL_DELAY="${BASH_REMATCH[1]}"
+  else
+    CONFIG_ARISA_DB_PULL_DELAY="$DEFAULT_ARISA_DB_PULL_DELAY"
+  fi
+
+  if ! is_valid_bind "$CONFIG_ARISA_BIND"; then
+    CONFIG_ARISA_BIND="$DEFAULT_ARISA_BIND"
+  fi
+  if ! is_valid_calling_package "$CONFIG_ARISA_CALLING_PKG"; then
+    CONFIG_ARISA_CALLING_PKG="$DEFAULT_ARISA_CALLING_PKG"
+  fi
+  if [ "$CONFIG_ARISA_DB_PULL_DELAY" -le 0 ]; then
+    CONFIG_ARISA_DB_PULL_DELAY=1000
+  fi
+}
+
+prepare_arisa_environment() {
+  ensure_arisa_config || return 1
+  load_arisa_config || return 1
+
+  ARISA_ENV_PREFIX="ARISA_BIND=$CONFIG_ARISA_BIND ARISA_UID=$CONFIG_ARISA_UID ARISA_CALLING_PKG=$CONFIG_ARISA_CALLING_PKG ARISA_DB_PULL_DELAY=$CONFIG_ARISA_DB_PULL_DELAY"
+}
+
+read_with_example() {
+  local prompt="$1"
+  local example="$2"
+
+  INPUT_VALUE=""
+  IFS= read -r -p "$prompt[$example] " INPUT_VALUE || return 1
+  if [ -z "$INPUT_VALUE" ]; then
+    INPUT_VALUE="$example"
+  fi
+}
+
+confirm_config_change() {
+  local answer
+
+  while true; do
+    IFS= read -r -p "Are you sure you want to change this value? (y/n): " answer || return 1
+    case "$answer" in
+      y|Y)
+        return 0
+        ;;
+      n|N)
+        echo "Change cancelled."
+        return 1
+        ;;
+      *)
+        echo "Please enter y or n."
+        ;;
+    esac
+  done
+}
+
+save_arisa_config() {
+  if ! write_arisa_config \
+    "$CONFIG_ARISA_BIND" \
+    "$CONFIG_ARISA_UID" \
+    "$CONFIG_ARISA_CALLING_PKG" \
+    "$CONFIG_ARISA_DB_PULL_DELAY"; then
+    return 1
+  fi
+
+  echo "Arisa configuration saved successfully."
+}
+
+configure_arisa_bind() {
+  local new_value
+
+  read_with_example "Enter ARISA_BIND: " "$CONFIG_ARISA_BIND" || return 1
+  new_value="$INPUT_VALUE"
+  if ! is_valid_bind "$new_value"; then
+    echo "Invalid IP:PORT. Using default: $DEFAULT_ARISA_BIND"
+    return 0
+  fi
+
+  echo "ARISA_BIND: $CONFIG_ARISA_BIND -> $new_value"
+  confirm_config_change || return 0
+  CONFIG_ARISA_BIND="$new_value"
+  save_arisa_config
+}
+
+configure_arisa_uid() {
+  local users_output
+  local line
+  local user_id
+  local user_name
+  local choice
+  local index
+  local -a user_ids=()
+  local -a user_names=()
+
+  users_output=$(run_adb_shell_as_root "pm list users" 2> /dev/null | tr -d '\r')
+  while IFS= read -r line; do
+    if [[ "$line" =~ UserInfo\{([0-9]+):([^:]+): ]]; then
+      user_id="${BASH_REMATCH[1]}"
+      user_name="${BASH_REMATCH[2]}"
+      if [ "$user_id" = "0" ]; then
+        user_ids+=("0")
+        user_names+=("Owner")
+        continue
+      fi
+
+      case "$user_name" in
+        "Work profile"|"업무 프로필")
+          user_ids+=("$user_id")
+          user_names+=("Work profile")
+          ;;
+        DUAL_APP|"듀얼 앱")
+          user_ids+=("$user_id")
+          user_names+=("DUAL_APP")
+          ;;
+        "Secure Folder"|"보안 폴더")
+          user_ids+=("$user_id")
+          user_names+=("Secure Folder")
+          ;;
+      esac
+    fi
+  done <<< "$users_output"
+
+  if [ "${#user_ids[@]}" -eq 0 ]; then
+    echo "No supported Android users were found."
+    return 1
+  fi
+
+  echo "Select an Android user:"
+  for index in "${!user_ids[@]}"; do
+    echo "  $((index + 1))) ${user_names[$index]} (ID: ${user_ids[$index]})"
+  done
+
+  IFS= read -r -p "Enter number (1-${#user_ids[@]}): " choice || return 1
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#user_ids[@]}" ]; then
+    echo "Error: Invalid selection."
+    return 1
+  fi
+
+  index=$((choice - 1))
+  user_id="${user_ids[$index]}"
+  echo "ARISA_UID: $CONFIG_ARISA_UID -> $user_id (${user_names[$index]})"
+  confirm_config_change || return 0
+  CONFIG_ARISA_UID="$user_id"
+  save_arisa_config
+}
+
+configure_arisa_calling_package() {
+  local new_value
+
+  read_with_example "Enter ARISA_CALLING_PKG: " "$CONFIG_ARISA_CALLING_PKG" || return 1
+  new_value="$INPUT_VALUE"
+  if ! is_valid_calling_package "$new_value"; then
+    echo "Invalid Android package name. Using default: $DEFAULT_ARISA_CALLING_PKG"
+    new_value="$DEFAULT_ARISA_CALLING_PKG"
+  fi
+
+  echo "ARISA_CALLING_PKG: $CONFIG_ARISA_CALLING_PKG -> $new_value"
+  confirm_config_change || return 0
+  CONFIG_ARISA_CALLING_PKG="$new_value"
+  save_arisa_config
+}
+
+configure_arisa_db_pull_delay() {
+  local new_value
+
+  read_with_example "Enter ARISA_DB_PULL_DELAY (ms): " "$CONFIG_ARISA_DB_PULL_DELAY" || return 1
+  new_value="$INPUT_VALUE"
+  if ! [[ "$new_value" =~ ^-?[0-9]+$ ]]; then
+    echo "Invalid delay. Using 1000 ms."
+    new_value=1000
+  elif [ "$new_value" -le 0 ]; then
+    echo "The delay must be positive. Using 1000 ms."
+    new_value=1000
+  fi
+
+  echo "ARISA_DB_PULL_DELAY: $CONFIG_ARISA_DB_PULL_DELAY -> $new_value"
+  confirm_config_change || return 0
+  CONFIG_ARISA_DB_PULL_DELAY="$new_value"
+  save_arisa_config
+}
+
+arisa_config() {
+  local choice
+
+  ensure_arisa_config || return 1
+  load_arisa_config || return 1
+
+  echo "Arisa configuration:"
+  echo "  1) ARISA_BIND ($CONFIG_ARISA_BIND)"
+  echo "  2) ARISA_UID ($CONFIG_ARISA_UID)"
+  echo "  3) ARISA_CALLING_PKG ($CONFIG_ARISA_CALLING_PKG)"
+  echo "  4) ARISA_DB_PULL_DELAY ($CONFIG_ARISA_DB_PULL_DELAY ms)"
+  IFS= read -r -p "Enter number (1-4): " choice || return 1
+
+  case "$choice" in
+    1)
+      configure_arisa_bind
+      ;;
+    2)
+      configure_arisa_uid
+      ;;
+    3)
+      configure_arisa_calling_package
+      ;;
+    4)
+      configure_arisa_db_pull_delay
+      ;;
+    *)
+      echo "Error: Invalid selection."
+      return 1
+      ;;
+  esac
+}
+
+arisa_status() {
+  local pid
+  pid=$(get_arisa_pid)
+  if [ -n "$pid" ]; then
+    echo "Arisa is working. PID: $pid"
+  else
+    echo "Arisa is not running."
+  fi
+}
+
+arisa_start() {
+  local pid
+  pid=$(get_arisa_pid)
+  if [ -n "$pid" ]; then
+    echo "Arisa is already running. PID: $pid"
+    return 0
+  fi
+
+  if ! run_adb_shell_as_root "test -x '$ARISA_BINARY_PATH'"; then
+    echo "Arisa is not installed at $ARISA_BINARY_PATH."
+    echo "Run '$0 install' first."
+    return 1
+  fi
+
+  prepare_arisa_environment || return 1
+
+  echo "Starting Arisa service in the background..."
+  run_adb_shell_as_root "nohup sh -c 'while true; do sleep 1; echo; done | $ARISA_ENV_PREFIX ${ARISA_BINARY_PATH}' > /dev/null 2>&1 &"
+  sleep 2
+
+  local new_pid
+  new_pid=$(get_arisa_pid)
+  if [ -n "$new_pid" ]; then
+    echo "Arisa service started. PID: $new_pid"
+  else
+    echo "Failed to start Arisa service."
+    return 1
+  fi
+}
+
+arisa_stop() {
+  local pid
+  pid=$(get_arisa_pid)
+  if [ -z "$pid" ]; then
+    echo "Arisa is not running."
+    return 0
+  fi
+
+  echo "Stopping Arisa service..."
+  run_adb_shell_as_root "kill -s SIGKILL $pid"
+  sleep 1
+
+  local stopped_pid
+  stopped_pid=$(get_arisa_pid)
+  if [ -z "$stopped_pid" ]; then
+    echo "Arisa service stopped."
+  else
+    echo "Failed to stop Arisa service. PID $stopped_pid is still running."
+    return 1
+  fi
+}
+
+install_file_provider() {
+  local apk_file
+  apk_file=$(mktemp "${TMPDIR:-/tmp}/fileprovider.XXXXXX.apk") || {
+    echo "Failed to create a temporary file for fileprovider.apk."
+    return 1
+  }
+
+  echo "Downloading fileprovider.apk: $FILE_PROVIDER_APK_URL"
+
+  local download_status=1
+  if command -v curl &> /dev/null; then
+    curl -fL -o "$apk_file" "$FILE_PROVIDER_APK_URL"
+    download_status=$?
+  elif command -v wget &> /dev/null; then
+    wget -O "$apk_file" "$FILE_PROVIDER_APK_URL"
+    download_status=$?
+  else
+    echo "Neither curl nor wget is installed."
+  fi
+
+  if [ "$download_status" -ne 0 ]; then
+    echo "Failed to download fileprovider.apk."
+    rm -f "$apk_file"
+    return 1
+  fi
+
+  echo "Installing fileprovider.apk on the selected device..."
+  if ! $ADB_CMD install -r "$apk_file"; then
+    echo "Failed to install fileprovider.apk."
+    rm -f "$apk_file"
+    return 1
+  fi
+  rm -f "$apk_file"
+
+  local package_path
+  package_path=$(run_adb_shell_as_root "pm path '$FILE_PROVIDER_PACKAGE'" 2> /dev/null | tr -d '\r')
+  if [[ "$package_path" != package:* ]]; then
+    echo "Installation verification failed for $FILE_PROVIDER_PACKAGE."
+    return 1
+  fi
+
+  echo "Granting MANAGE_EXTERNAL_STORAGE to $FILE_PROVIDER_PACKAGE..."
+  if ! run_adb_shell_as_root "appops set $FILE_PROVIDER_PACKAGE MANAGE_EXTERNAL_STORAGE allow"; then
+    echo "Failed to grant MANAGE_EXTERNAL_STORAGE to $FILE_PROVIDER_PACKAGE."
+    return 1
+  fi
+
+  local appop_mode
+  appop_mode=$(run_adb_shell_as_root "appops get $FILE_PROVIDER_PACKAGE MANAGE_EXTERNAL_STORAGE" 2> /dev/null | tr -d '\r')
+  if [[ "$appop_mode" != *allow* ]]; then
+    echo "MANAGE_EXTERNAL_STORAGE verification failed for $FILE_PROVIDER_PACKAGE."
+    return 1
+  fi
+
+  echo "fileprovider.apk installed and MANAGE_EXTERNAL_STORAGE is allowed."
+}
+
+arisa_install() {
+  local local_file
+  local_file=$(mktemp "${TMPDIR:-/tmp}/${ARISA_ASSET_NAME}.XXXXXX") || {
+    echo "Failed to create a temporary download file."
+    return 1
+  }
+
+  echo "Selected release binary: $ARISA_ASSET_NAME"
+  echo "Downloading: $ARISA_BINARY_URL"
+
+  local download_status=1
+  if command -v curl &> /dev/null; then
+    curl -fL -o "$local_file" "$ARISA_BINARY_URL"
+    download_status=$?
+  elif command -v wget &> /dev/null; then
+    wget -O "$local_file" "$ARISA_BINARY_URL"
+    download_status=$?
+  else
+    echo "Neither curl nor wget is installed."
+  fi
+
+  if [ "$download_status" -ne 0 ]; then
+    echo "The Arisa release binary for $DEVICE_ARCH was not found or could not be downloaded."
+    echo "URL: $ARISA_BINARY_URL"
+    rm -f "$local_file"
+    return 1
+  fi
+
+  echo "Pushing $ARISA_ASSET_NAME to $ARISA_BINARY_PATH..."
+  if ! $ADB_CMD push "$local_file" "$ARISA_BINARY_PATH"; then
+    echo "Failed to push Arisa to /data/local/tmp. Check the ADB connection and permissions."
+    rm -f "$local_file"
+    return 1
+  fi
+
+  if ! run_adb_shell_as_root "chmod 755 '$ARISA_BINARY_PATH'"; then
+    echo "Failed to make $ARISA_BINARY_PATH executable."
+    rm -f "$local_file"
+    return 1
+  fi
+
+  if ! run_adb_shell_as_root "test -x '$ARISA_BINARY_PATH'"; then
+    echo "Installation verification failed: $ARISA_BINARY_PATH"
+    rm -f "$local_file"
+    return 1
+  fi
+
+  if ! ensure_arisa_config; then
+    rm -f "$local_file"
+    return 1
+  fi
+
+  rm -f "$local_file"
+
+  if ! install_file_provider; then
+    return 1
+  fi
+
+  echo "Installation completed successfully: $ARISA_BINARY_PATH"
+}
+
+arisa_remove() {
+  local pid
+  pid=$(get_arisa_pid)
+  if [ -n "$pid" ]; then
+    echo "Stopping Arisa service before removal..."
+    run_adb_shell_as_root "kill -s SIGKILL $pid"
+    sleep 1
+  fi
+
+  if ! run_adb_shell_as_root "test -e '$ARISA_BINARY_PATH'"; then
+    echo "Arisa is not installed: $ARISA_BINARY_PATH"
+    return 0
+  fi
+
+  echo "Removing $ARISA_BINARY_PATH..."
+  if ! run_adb_shell_as_root "rm -f '$ARISA_BINARY_PATH'"; then
+    echo "Failed to remove $ARISA_BINARY_PATH."
+    return 1
+  fi
+
+  if run_adb_shell_as_root "test -e '$ARISA_BINARY_PATH'"; then
+    echo "Removal verification failed: $ARISA_BINARY_PATH still exists."
+    return 1
+  fi
+
+  echo "Arisa was removed successfully: $ARISA_BINARY_PATH"
+}
+
+arisa_all_remove() {
+  local failed=0
+  local package_path
+
+  if ! arisa_remove; then
+    failed=1
+  fi
+
+  if run_adb_shell_as_root "test -e '$ARISA_CONFIG_PATH'"; then
+    echo "Removing $ARISA_CONFIG_PATH..."
+    if ! run_adb_shell_as_root "rm -f '$ARISA_CONFIG_PATH'"; then
+      echo "Failed to remove $ARISA_CONFIG_PATH."
+      failed=1
+    elif run_adb_shell_as_root "test -e '$ARISA_CONFIG_PATH'"; then
+      echo "Removal verification failed: $ARISA_CONFIG_PATH still exists."
+      failed=1
+    else
+      echo "Arisa configuration removed successfully: $ARISA_CONFIG_PATH"
+    fi
+  else
+    echo "Arisa configuration was not found: $ARISA_CONFIG_PATH"
+  fi
+
+  package_path=$(run_adb_shell_as_root "pm path '$FILE_PROVIDER_PACKAGE'" 2> /dev/null | tr -d '\r')
+  if [[ "$package_path" == package:* ]]; then
+    echo "Uninstalling $FILE_PROVIDER_PACKAGE..."
+    if ! $ADB_CMD uninstall "$FILE_PROVIDER_PACKAGE"; then
+      echo "Failed to uninstall $FILE_PROVIDER_PACKAGE."
+      failed=1
+    fi
+
+    package_path=$(run_adb_shell_as_root "pm path '$FILE_PROVIDER_PACKAGE'" 2> /dev/null | tr -d '\r')
+    if [[ "$package_path" == package:* ]]; then
+      echo "Uninstall verification failed: $FILE_PROVIDER_PACKAGE is still installed."
+      failed=1
+    else
+      echo "$FILE_PROVIDER_PACKAGE was uninstalled successfully."
+    fi
+  else
+    echo "$FILE_PROVIDER_PACKAGE is not installed."
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    echo "Some Arisa files or components could not be removed."
+    return 1
+  fi
+
+  echo "Arisa binary, configuration, and file provider were removed successfully."
+}
+
+arisa_install_redroid() {
+  if ! command -v lsb_release &> /dev/null; then
+    echo "Warning: lsb-release is not installed. Version check may be inaccurate."
+    UBUNTU_VERSION="0"
+  else
+    UBUNTU_VERSION=$(lsb_release -rs | awk -F. '{print $1}')
+  fi
+
+  if [[ "$UBUNTU_VERSION" -lt 22 ]]; then
+    echo "This script only supports Ubuntu 22 or higher. Install manually."
+    return 1
+  fi
+
+  if command -v docker &> /dev/null; then
+    echo "Docker already installed. Skipping docker install."
+  else
+    echo "Installing Docker..."
+    sudo apt-get update
+    sudo apt-get install ca-certificates curl -y
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update
+    sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+    echo "Docker installed successfully."
+  fi
+
+  echo "Setting up binder drivers."
+
+  cat <<EOF > binder.service
+[Unit]
+Description=Auto load binder
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/modprobe binder_linux devices="binder,hwbinder,vndbinder"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo cp binder.service /etc/systemd/system/binder.service
+  rm binder.service
+
+  sudo systemctl enable binder.service
+  sudo systemctl start binder.service
+
+  echo "Creating redroid docker container... It will take a few minutes."
+  sudo docker run -itd --privileged --name redroid \
+    -v ~/data:/data \
+    -p 5555:5555 \
+    -p 3000:3000 \
+    --restart=always \
+    redroid/redroid:14.0.0-latest \
+    ro.product.model=SM-T970 \
+    ro.product.brand=Samsung
+
+  echo "Redroid installation finished."
+}
+
+# --- Main Logic ---
+
+show_usage() {
+  echo "Usage: $0 {status|start|stop|install|config|remove|allremove|install_redroid}"
+}
+
+command_name="${1:-}"
+
+if [ "$#" -ne 1 ]; then
+  show_usage
+  exit 1
+fi
+
+if [[ "$command_name" == "status" || "$command_name" == "start" || "$command_name" == "stop" || "$command_name" == "install" || "$command_name" == "remove" || "$command_name" == "allremove" || "$command_name" == "config" ]]; then
+  check_adb_installed || exit 1
+  select_adb_device || exit 1
+  ensure_su_root || exit 1
+  configure_arisa_for_device || exit 1
+fi
+
+case "$command_name" in
+  status)
+    arisa_status
+    ;;
+  start)
+    arisa_start
+    ;;
+  stop)
+    arisa_stop
+    ;;
+  install)
+    arisa_install
+    ;;
+  config)
+    arisa_config
+    ;;
+  remove)
+    arisa_remove
+    ;;
+  allremove)
+    arisa_all_remove || exit 1
+    ;;
+  install_redroid)
+    arisa_install_redroid
+    ;;
+  *)
+    show_usage
+    exit 1
+    ;;
+esac
+
+exit 0
