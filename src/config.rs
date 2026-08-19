@@ -4,7 +4,7 @@ use crate::database;
 
 const DEFAULT_BIND: &str = "0.0.0.0:3000";
 const DEFAULT_TEMP_DIR: &str = "/sdcard/arisa_temp";
-pub const MAX_GRPC_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_GRPC_MESSAGE_BYTES: usize = 300 * 1024 * 1024;
 
 pub struct RuntimeConfig {
     pub bind: String,
