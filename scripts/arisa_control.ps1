@@ -6,7 +6,7 @@ Selects an ADB device, detects its ABI, and installs or controls the matching Ar
 #>
 param(
     [Parameter(Position = 0, Mandatory = $false)]
-    [ValidateSet('status', 'start', 'stop', 'install', 'config', 'remove', 'allremove')]
+    [ValidateSet('status', 'start', 'stop', 'install', 'config', 'remove', 'all_remove')]
     [string]$Action = 'status'
 )
 
@@ -810,7 +810,7 @@ $succeeded = switch ($Action) {
     'remove' {
         Remove-Arisa
     }
-    'allremove' {
+    'all_remove' {
         Remove-AllArisa
     }
 }
