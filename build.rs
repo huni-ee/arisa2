@@ -1,14 +1,5 @@
 use std::{path::PathBuf, process::Command};
 
-const SIGNAL_CHAIN_SYMBOLS: &[&str] = &[
-    "SetSpecialSignalHandlerFn",
-    "GetSpecialSignalHandlerFn",
-    "EnsureFrontOfChain",
-    "InitializeSignalChain",
-    "AddSpecialSignalHandlerFn",
-    "RemoveSpecialSignalHandlerFn",
-];
-
 fn main() {
     println!("cargo:rerun-if-env-changed=ARISA_COMMIT_SHA");
     println!("cargo:rerun-if-changed=.git/HEAD");
@@ -48,11 +39,6 @@ fn main() {
     let target = std::env::var("TARGET").unwrap_or_default();
     if !target.contains("android") {
         return;
-    }
-
-    for symbol in SIGNAL_CHAIN_SYMBOLS {
-        println!("cargo:rustc-link-arg-bins=-Wl,-u,{symbol}");
-        println!("cargo:rustc-link-arg-bins=-Wl,--export-dynamic-symbol={symbol}");
     }
 }
 
