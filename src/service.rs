@@ -189,11 +189,14 @@ impl Arisa for ArisaService {
         if request.sql.trim().is_empty() {
             return Err(Status::invalid_argument("sql cannot be empty"));
         }
-        let limit = request.limit.unwrap_or(100).clamp(1, 10_000) as usize;
+
+        let limit = request.limit.unwrap_or(100) as usize;
         let database = self.database.clone();
+        let params = parse_query_params(&request.params_json).map_err(Status::invalid_argument)?;
+
         let rows_json = blocking(move || {
             database
-                .raw_query(&request.sql, limit)
+                .raw_query(&request.sql, &params, limit)
                 .map(|rows| rows.into_iter().map(|row| row.to_string()).collect())
         })
         .await?;
@@ -228,4 +231,41 @@ where
         .await
         .map_err(|error| Status::internal(format!("database task failed: {error}")))?
         .map_err(|error| Status::internal(error.to_string()))
+}
+
+use r2d2_sqlite::rusqlite::types::Value as SqlValue;
+use serde_json::Value;
+
+fn parse_query_params(raw: &str) -> Result<Vec<SqlValue>, String> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let values: Vec<Value> = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+
+    values.into_iter().map(json_to_sql_value).collect()
+}
+
+fn json_to_sql_value(value: Value) -> Result<SqlValue, String> {
+    match value {
+        Value::Null => Ok(SqlValue::Null),
+
+        Value::Bool(value) => Ok(SqlValue::Integer(if value { 1 } else { 0 })),
+
+        Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                Ok(SqlValue::Integer(value))
+            } else if let Some(value) = value.as_f64() {
+                Ok(SqlValue::Real(value))
+            } else {
+                Err("unsupported number".to_string())
+            }
+        }
+
+        Value::String(value) => Ok(SqlValue::Text(value)),
+
+        Value::Array(_) | Value::Object(_) => {
+            Err("array/object cannot be used as a SQL parameter".to_string())
+        }
+    }
 }

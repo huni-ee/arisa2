@@ -118,6 +118,7 @@ message GetChannelMembersRequest {
 message RawQueryRequest {
   string sql = 1;
   optional uint32 limit = 2;
+  string params_json = 3;
 }
 
 message RawQueryResponse {

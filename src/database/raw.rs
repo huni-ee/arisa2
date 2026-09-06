@@ -1,11 +1,12 @@
+use super::{Database, DbResult};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use r2d2_sqlite::rusqlite;
+use r2d2_sqlite::rusqlite::types::Value as SqlValue;
 use r2d2_sqlite::rusqlite::types::ValueRef;
 use serde_json::{Value, json};
 
-use super::{Database, DbResult};
-
 impl Database {
-    pub fn raw_query(&self, sql: &str, limit: usize) -> DbResult<Vec<Value>> {
+    pub fn raw_query(&self, sql: &str, params: &[SqlValue], limit: usize) -> DbResult<Vec<Value>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(sql)?;
 
@@ -15,7 +16,7 @@ impl Database {
             .map(ToString::to_string)
             .collect();
 
-        let mut rows = statement.query([])?;
+        let mut rows = statement.query(rusqlite::params_from_iter(params.iter()))?;
         let mut output = Vec::new();
 
         while output.len() < limit {

@@ -8,13 +8,17 @@ impl Database {
     pub fn get_channel(&self, channel_id: i64) -> DbResult<Channel> {
         let connection = self.connection()?;
 
-        let (channel_type, private_meta, metadata): (String, Option<String>, Option<String>) =
-            connection.query_row(
-                "SELECT type, private_meta, v
+        let (channel_type, private_meta, v_data, metadata): (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = connection.query_row(
+            "SELECT type, private_meta, v, meta
                  FROM db1.chat_rooms WHERE id = ?1 LIMIT 1",
-                [channel_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
+            [channel_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
 
         let name = if channel_type == "OM" {
             Some(connection.query_row(
@@ -24,7 +28,9 @@ impl Database {
                 [channel_id],
                 |row| row.get::<_, String>(0),
             )?)
-        } else if let Some(user_ids) = metadata.as_deref().and_then(parse_display_user_ids) {
+        } else if let Some(name) = metadata.as_deref().and_then(parse_name_from_metadata) {
+            Some(name)
+        } else if let Some(user_ids) = v_data.as_deref().and_then(parse_display_user_ids) {
             let members = self.get_users_with_connection(&connection, channel_id, &user_ids)?;
 
             Some(
@@ -56,16 +62,26 @@ impl Database {
             |row| row.get(0),
         )?;
 
-        let active_member_ids = raw
-            .as_deref()
-            .and_then(parse_i64_array)
-            .unwrap_or_default();
+        let active_member_ids = raw.as_deref().and_then(parse_i64_array).unwrap_or_default();
 
         Ok(ChannelMembers {
             channel_id,
             active_member_ids,
         })
     }
+}
+
+fn parse_name_from_metadata(raw: &str) -> Option<String> {
+    let metadata: Vec<Value> = serde_json::from_str(raw).ok()?;
+
+    metadata
+        .into_iter()
+        .find(|meta| meta.get("type").and_then(Value::as_i64) == Some(3))
+        .and_then(|meta| {
+            meta.get("content")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
 }
 
 fn parse_display_user_ids(raw: &str) -> Option<Vec<i64>> {
