@@ -7,7 +7,7 @@ use tonic::{Request, Response, Status};
 use crate::{
     android::{Action, ActionProcessor},
     credential,
-    database::Database,
+    database::{Database, DbResult},
     media,
     proto::{
         Channel, ChannelMembers, Credential, DecryptRequest, DecryptResponse, EnterChannelRequest,
@@ -220,14 +220,12 @@ impl Arisa for ArisaService {
     }
 }
 
-async fn blocking<T>(
-    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, Status>
+async fn blocking<T>(operation: impl FnOnce() -> DbResult<T> + Send + 'static) -> Result<T, Status>
 where
     T: Send + 'static,
 {
     tokio::task::spawn_blocking(operation)
         .await
         .map_err(|error| Status::internal(format!("database task failed: {error}")))?
-        .map_err(Status::internal)
+        .map_err(|error| Status::internal(error.to_string()))
 }

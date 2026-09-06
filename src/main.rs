@@ -1,6 +1,7 @@
 mod android;
 mod config;
 mod credential;
+mod crypto;
 mod database;
 mod error;
 mod media;
@@ -15,7 +16,7 @@ use tonic::transport::Server;
 use crate::{
     android::{ActionProcessor, create_android_vm},
     config::MAX_GRPC_MESSAGE_BYTES,
-    database::{Database, create_pool, query_current_user_id, start_poller},
+    database::{Database, start_poller},
     proto::arisa_server::ArisaServer,
     service::ArisaService,
 };
@@ -31,9 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = config::load();
     tokio::fs::create_dir_all(&config.temp_dir).await?;
 
-    let pool = create_pool(&config.app_path, &config.database_key);
-    let current_user_id = query_current_user_id(&pool);
-    let database = Database::new(pool, current_user_id);
+    let database = Database::open(&config.app_path, &config.database_key)?;
     let (events, _) = broadcast::channel(128);
     start_poller(database.clone(), events.clone(), config.db_pull_delay);
 

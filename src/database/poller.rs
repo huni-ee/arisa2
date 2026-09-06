@@ -8,7 +8,7 @@ use super::Database;
 
 pub fn start_poller(database: Database, events: broadcast::Sender<Event>, pull_delay: u64) {
     thread::spawn(move || {
-        let mut last_database_id = database.latest_message_database_id();
+        let mut last_database_id = database.latest_message_database_id().unwrap_or(0);
 
         loop {
             thread::sleep(Duration::from_millis(pull_delay));

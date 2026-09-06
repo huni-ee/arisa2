@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use crate::database;
+use crate::crypto;
 
 const DEFAULT_BIND: &str = "0.0.0.0:3000";
 const DEFAULT_TEMP_DIR: &str = "/sdcard/arisa_temp";
@@ -29,8 +29,8 @@ pub fn load() -> RuntimeConfig {
     ))
     .expect("failed to read KakaoTalk preferences");
     let seed =
-        database::crypto_user::extract_db_seed(&preferences).expect("failed to read database seed");
-    let database_key = database::crypto_user::kdf(seed).expect("failed to derive database key");
+        crypto::crypto_user::extract_db_seed(&preferences).expect("failed to read database seed");
+    let database_key = crypto::crypto_user::kdf(seed).expect("failed to derive database key");
 
     RuntimeConfig {
         bind: env::var("ARISA_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string()),

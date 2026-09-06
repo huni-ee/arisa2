@@ -1,8 +1,12 @@
 use serde_json::Value;
 
-use crate::proto::{Channel, Event, FeedEvent, Member, MessageEvent, MessageScope, event};
+use crate::{
+    crypto::crypto::Decryptor,
+    database::{feed, record::MessageRow},
+    proto::{Channel, Event, FeedEvent, Member, MessageEvent, MessageScope, event},
+};
 
-use super::{Database, Decryptor, feed, record::MessageRow};
+use super::{Database, DbError, DbResult};
 
 impl Database {
     pub fn decrypt(&self, ciphertext: &str, enc: u32, user_id: Option<i64>) -> String {
@@ -12,9 +16,10 @@ impl Database {
         }
     }
 
-    pub(crate) fn map_message(&self, row: MessageRow) -> Result<Event, String> {
+    pub(crate) fn map_message(&self, row: MessageRow) -> DbResult<Event> {
         let author = self.get_user(row.channel_id, row.user_id).ok();
         let channel = self.get_channel(row.channel_id)?;
+
         assemble_message(&self.decryptor, row, channel, author)
     }
 }
@@ -24,32 +29,38 @@ fn assemble_message(
     row: MessageRow,
     channel: Channel,
     author: Option<Member>,
-) -> Result<Event, String> {
+) -> DbResult<Event> {
     let metadata: Option<Value> = row
         .metadata
         .as_deref()
         .and_then(|value| serde_json::from_str(value).ok());
+
     let enc = metadata
         .as_ref()
         .and_then(|value| value.get("enc"))
         .and_then(Value::as_u64)
         .unwrap_or_default() as u32;
+
     let message = row
         .message
         .as_deref()
         .map(|value| decryptor.decrypt_for_user(value, enc, row.user_id))
         .unwrap_or_default();
+
     let attachment = row
         .attachment
         .as_deref()
         .map(|value| decryptor.decrypt_for_user(value, enc, row.user_id))
         .unwrap_or_default();
+
     let attachment_json = serde_json::from_str::<Value>(&attachment)
         .unwrap_or_else(|_| serde_json::json!({}))
         .to_string();
 
     let value = if row.message_type == 0 {
-        let payload = feed::parse(&message, author.as_ref())?;
+        let payload = feed::parse(&message, author.as_ref())
+            .map_err(|error| DbError::MessageMapping(error.into()))?;
+
         event::Value::Feed(FeedEvent {
             channel: Some(channel),
             feed: Some(payload),
