@@ -6,6 +6,8 @@ use crate::proto::{
     FeedUnknown, FeedUser, FeedUserJoined, FeedUserKicked, FeedUserLeft, Member, feed_payload,
 };
 
+const OPEN_CHAT_REWRITE_TYPE: i64 = 13;
+
 #[derive(Clone, Copy)]
 enum FeedType {
     Unknown,
@@ -33,24 +35,28 @@ impl From<i64> for FeedType {
             6 => Self::UserKicked,
             11 => Self::ModeratorAdded,
             12 => Self::ModeratorRemoved,
+            OPEN_CHAT_REWRITE_TYPE | 26 => Self::MessageHidden,
             14 => Self::MessageDeleted,
             15 => Self::HostChanged,
             25 => Self::MessageChanged,
-            26 => Self::MessageHidden,
             27 => Self::ManagerSpeakerMode,
             _ => Self::Unknown,
         }
     }
 }
 
-pub fn parse(raw: &str, author: Option<&Member>) -> Result<FeedPayload, String> {
+pub fn parse(
+    raw: &str,
+    author: Option<&Member>,
+    current_message_id: i64,
+) -> Result<FeedPayload, String> {
     let json: Value =
         serde_json::from_str(raw).map_err(|error| format!("invalid feed JSON: {error}"))?;
-    let feed_type = json
+    let feed_type_id = json
         .get("feedType")
         .and_then(Value::as_i64)
-        .map(FeedType::from)
-        .unwrap_or(FeedType::Unknown);
+        .unwrap_or_default();
+    let feed_type = FeedType::from(feed_type_id);
 
     let value = match feed_type {
         FeedType::UserJoined | FeedType::OpenLinkUserJoined => {
@@ -70,16 +76,23 @@ pub fn parse(raw: &str, author: Option<&Member>) -> Result<FeedPayload, String> 
         }),
         FeedType::MessageDeleted => feed_payload::Value::MessageDeleted(FeedMessageDeleted {
             message_id: required_id(&json, "logId")?,
+            previous_message: None,
         }),
         FeedType::MessageChanged => feed_payload::Value::MessageChanged(FeedMessageChanged {
             message_id: required_id(&json, "logId")?,
             target_revision: required_i64(&json, "targetRevision")?,
+            message: None,
         }),
         FeedType::MessageHidden => feed_payload::Value::MessageHidden(FeedMessageHidden {
-            message_ids: required_array(&json, "chatLogInfos")?
-                .iter()
-                .filter_map(|value| value.get("logId").and_then(json_id))
-                .collect(),
+            message_ids: if feed_type_id == OPEN_CHAT_REWRITE_TYPE {
+                vec![current_message_id]
+            } else {
+                required_array(&json, "chatLogInfos")?
+                    .iter()
+                    .filter_map(|value| value.get("logId").and_then(json_id))
+                    .collect()
+            },
+            previous_messages: Vec::new(),
         }),
         FeedType::HostChanged => feed_payload::Value::HostChanged(FeedHostChanged {
             previous_host: json.get("prevHost").and_then(feed_user),

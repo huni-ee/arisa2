@@ -189,6 +189,11 @@ enum MessageScope {
   MESSAGE_SCOPE_ALL = 3;
 }
 
+message MessageRevision {
+  int64 revision = 1;
+  string message = 2;
+}
+
 message MessageEvent {
   int64 message_id = 1;
   optional int64 thread_id = 2;
@@ -198,6 +203,7 @@ message MessageEvent {
   optional Member author = 6;
   string message = 7;
   string attachment_json = 8;
+  repeated MessageRevision modify_log = 9;
 }
 
 message FeedUser {
@@ -220,15 +226,18 @@ message FeedUserKicked {
 
 message FeedMessageDeleted {
   int64 message_id = 1;
+  optional MessageEvent previous_message = 2;
 }
 
 message FeedMessageChanged {
   int64 message_id = 1;
   int64 target_revision = 2;
+  optional MessageEvent message = 3;
 }
 
 message FeedMessageHidden {
   repeated int64 message_ids = 1;
+  repeated MessageEvent previous_messages = 2;
 }
 
 message FeedHostChanged {

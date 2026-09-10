@@ -42,6 +42,7 @@ __all__ = (
     "MediaMode",
     "Member",
     "MessageEvent",
+    "MessageRevision",
     "MessageScope",
     "OpenChannelMemberExtra",
     "ProfileType",
@@ -320,6 +321,10 @@ class FeedMessageChanged(betterproto2.Message):
 
     target_revision: "int" = betterproto2.field(2, betterproto2.TYPE_INT64)
 
+    message: "MessageEvent | None" = betterproto2.field(
+        3, betterproto2.TYPE_MESSAGE, optional=True
+    )
+
 
 default_message_pool.register_message(
     "arisa.v1", "FeedMessageChanged", FeedMessageChanged
@@ -329,6 +334,10 @@ default_message_pool.register_message(
 @dataclass(eq=False, repr=False)
 class FeedMessageDeleted(betterproto2.Message):
     message_id: "int" = betterproto2.field(1, betterproto2.TYPE_INT64)
+
+    previous_message: "MessageEvent | None" = betterproto2.field(
+        2, betterproto2.TYPE_MESSAGE, optional=True
+    )
 
 
 default_message_pool.register_message(
@@ -340,6 +349,10 @@ default_message_pool.register_message(
 class FeedMessageHidden(betterproto2.Message):
     message_ids: "list[int]" = betterproto2.field(
         1, betterproto2.TYPE_INT64, repeated=True
+    )
+
+    previous_messages: "list[MessageEvent]" = betterproto2.field(
+        2, betterproto2.TYPE_MESSAGE, repeated=True
     )
 
 
@@ -665,8 +678,22 @@ class MessageEvent(betterproto2.Message):
 
     attachment_json: "str" = betterproto2.field(8, betterproto2.TYPE_STRING)
 
+    modify_log: "list[MessageRevision]" = betterproto2.field(
+        9, betterproto2.TYPE_MESSAGE, repeated=True
+    )
+
 
 default_message_pool.register_message("arisa.v1", "MessageEvent", MessageEvent)
+
+
+@dataclass(eq=False, repr=False)
+class MessageRevision(betterproto2.Message):
+    revision: "int" = betterproto2.field(1, betterproto2.TYPE_INT64)
+
+    message: "str" = betterproto2.field(2, betterproto2.TYPE_STRING)
+
+
+default_message_pool.register_message("arisa.v1", "MessageRevision", MessageRevision)
 
 
 @dataclass(eq=False, repr=False)
@@ -692,6 +719,8 @@ class RawQueryRequest(betterproto2.Message):
     sql: "str" = betterproto2.field(1, betterproto2.TYPE_STRING)
 
     limit: "int | None" = betterproto2.field(2, betterproto2.TYPE_UINT32, optional=True)
+
+    params_json: "str" = betterproto2.field(3, betterproto2.TYPE_STRING)
 
 
 default_message_pool.register_message("arisa.v1", "RawQueryRequest", RawQueryRequest)
