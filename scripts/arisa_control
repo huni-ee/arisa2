@@ -75,9 +75,15 @@ select_adb_device() {
 run_adb_shell_as_root() {
   local command="$1"
   local escaped_command
+  local -a shell_options=(-n)
+
+  # Only configuration writes need stdin; other commands must not consume menu input.
+  if [ "${2:-}" = "--stdin" ]; then
+    shell_options=()
+  fi
 
   escaped_command=${command//\'/\'\\\'\'}
-  $ADB_CMD shell "su root sh -c '$escaped_command'"
+  $ADB_CMD shell "${shell_options[@]}" "su root sh -c '$escaped_command'"
 }
 
 ensure_su_root() {
@@ -170,7 +176,7 @@ write_arisa_config() {
   json=$(printf '{"ARISA_BIND":"%s","ARISA_UID":%s,"ARISA_CALLING_PKG":"%s","ARISA_DB_PULL_DELAY":%s}' \
     "$bind" "$uid" "$calling_package" "$db_pull_delay")
 
-  if ! printf '%s\n' "$json" | run_adb_shell_as_root "cat > '$ARISA_CONFIG_PATH'"; then
+  if ! printf '%s\n' "$json" | run_adb_shell_as_root "cat > '$ARISA_CONFIG_PATH'" --stdin; then
     echo "Failed to write Arisa configuration: $ARISA_CONFIG_PATH"
     return 1
   fi
@@ -256,7 +262,8 @@ read_with_example() {
   local example="$2"
 
   INPUT_VALUE=""
-  IFS= read -r -p "$prompt[$example] " INPUT_VALUE || return 1
+  printf 'Current value: %s (press Enter to keep it)\n' "$example"
+  IFS= read -r -p "$prompt" INPUT_VALUE || return 1
   if [ -z "$INPUT_VALUE" ]; then
     INPUT_VALUE="$example"
   fi

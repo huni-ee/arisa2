@@ -54,7 +54,8 @@ function Invoke-RootAdbShell {
     )
 
     $escapedCommand = $Command.Replace("'", "'\''")
-    Invoke-SelectedAdb -AdbArguments @('shell', "su root sh -c '$escapedCommand'")
+    # Keep ADB commands from reading the prompts' keyboard input.
+    Invoke-SelectedAdb -AdbArguments @('shell', '-n', "su root sh -c '$escapedCommand'")
 }
 
 function Test-SuRootAccess {
@@ -317,7 +318,9 @@ function Read-ValueWithExample {
         [string]$Example
     )
 
-    $value = Read-Host "$Prompt[$Example]"
+    Write-Host "Current value: $Example"
+    $promptText = $Prompt.Trim().TrimEnd(':')
+    $value = Read-Host "$promptText (Enter keeps current value)"
     if ([string]::IsNullOrEmpty($value)) {
         return $Example
     }
